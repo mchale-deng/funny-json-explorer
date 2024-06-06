@@ -1,0 +1,14 @@
+{
+    "poker-face": {
+        "intermediate": "♢",
+        "leaf": "♤"
+    },
+    "star": {
+        "intermediate": "✰",
+        "leaf": "✯"
+    },
+    "default": {
+        "intermediate": " ",
+        "leaf": " "
+    }
+}
