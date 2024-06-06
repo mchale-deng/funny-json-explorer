@@ -1,6 +1,5 @@
 import argparse
 import json
-import graphviz
 from abc import ABC, abstractmethod
 
 # Function to load icon families from a configuration file
