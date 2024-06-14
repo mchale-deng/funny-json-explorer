@@ -2,110 +2,137 @@ import argparse
 import json
 from abc import ABC, abstractmethod
 
-# Function to load icon families from a configuration file
+'''
+深度优先遍历 JSON 数据结构的迭代器。
+使用栈来管理遍历状态，通过迭代器协议方法 __iter__ 和 __next__ 实现遍历。
+在遍历过程中，判断每个节点是否是最后一个元素，
+并将字典节点的子项递归地添加到栈中，确保能够遍历整个 JSON 结构。
+'''
+class JSONIterator:
+    def __init__(self, data):
+        self.data = data
+        self.stack = [(data, iter(data.items()))]
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        while self.stack:
+            parent, children = self.stack[-1]  # 处理栈顶元素
+            # len_parent = len(parent)
+            try:
+                key, value = next(children)  # 获取下一个键值对
+                # is_last = len_parent == 1
+                # len_parent -= 1
+                level = len(self.stack)
+                # del parent[key]
+                is_last = next(children, None) is None  # 是该parent的最后一个了
+                if not is_last:
+                    self.stack[-1] = (parent, iter(parent.items()))
+                    next(self.stack[-1][1])
+
+                if isinstance(value, dict):  # 如果值是字典，将其添加到栈中，以便进一步迭代其子项。
+                    self.stack.append((value, iter(value.items())))
+                return key, value, is_last, level # 返回当前键、值、是否是最后一个元素以及当前层级（栈的长度减一）。
+            except StopIteration:  # 如果当前迭代器耗尽（没有更多元素），从栈中移除当前项。
+                self.stack.pop()
+        raise StopIteration  # 如果栈为空，抛出 StopIteration 以终止迭代。
+
+
+class JSONVisitor(ABC):
+    @abstractmethod
+    def visit(self, key, value, is_last, level, parent_is_last):
+        pass
+
+
+class TreeJSONVisitor(JSONVisitor):
+    def __init__(self, icons):
+        self.icons = icons
+        self.result = ""
+        self.pre_parent_stack = []
+
+    def finish(self):
+        pass
+
+    def visit(self, key, value, is_last, level, parent_is_last):
+        icon = self.icons['leaf'] if value is None or not isinstance(value, dict) else self.icons['intermediate']
+        connector = "└─" if is_last else "├─"
+        # pre = "│  " if parent_is_last else "   "
+
+        if len(self.pre_parent_stack) < level:
+            self.pre_parent_stack.append("")
+
+        # if is_last and level > 0:
+        #     self.prefix_stack[level - 1] = "   "
+        # else:
+        #     self.prefix_stack[level - 1] = "│  "  # dd 或许level-1 应该是“”
+
+        if level != 1:
+            if parent_is_last:
+                self.pre_parent_stack[level - 1] = "   "
+
+            else:
+                self.pre_parent_stack[level - 1] = "│  "
+
+            # if is_last and level > 0:
+            #     self.prefix_stack[level - 1] = "   "
+            #
+            # elif parent_is_last:
+            #     self.prefix_stack[level - 1] = "│  "
+
+        # prefix = ""
+        # if level > 1:
+        #     prefix = pre + "   " * (level-2)
+        # else:
+        prefix = "".join(self.pre_parent_stack[:level])
+        self.result += f"{prefix}{connector}{icon}{key}"
+        if isinstance(value, dict):
+            self.result += "\n"
+        else:
+            self.result += f": {value}\n"
+
+class RectangleJSONVisitor(JSONVisitor):
+    def __init__(self, icons):
+        self.icons = icons
+        self.result = ""
+        self.width = 30
+
+    def visit(self, key, value, is_last, level, parent_is_last):
+        icon = self.icons['leaf'] if not isinstance(value, dict) else self.icons['intermediate']
+        # connector = "└─" if is_last else "├─"
+        connector = "├─"
+        prefix = "│  " * (level - 1) + connector
+        line = f"{prefix}{icon}{key} ─{'─' * (self.width - len(prefix) - len(key) - 3)}┤\n"
+        # if not isinstance(value, dict):
+        #     line = line.replace("─┤", f": {value} ─┤\n")
+        self.result += line
+
+    def finish(self):
+        str_list = list(self.result)
+        str_list[0] = '┌'
+        str_list[self.width] = '┐'
+        str_list[-2] = '┘'
+        begin = -2-self.width
+        str_list[begin:begin+4] = ['└', '─', '─', '┴']
+        self.result = ''.join(str_list)
+
+class JSONVisualizerFactory(ABC):
+    @abstractmethod
+    def create_visitor(self, icons):
+        pass
+
+class TreeJSONVisualizerFactory(JSONVisualizerFactory):
+    def create_visitor(self, icons):
+        return TreeJSONVisitor(icons)
+
+class RectangleJSONVisualizerFactory(JSONVisualizerFactory):
+    def create_visitor(self, icons):
+        return RectangleJSONVisitor(icons)
+
+
 def load_icon_families(config_file):
     with open(config_file, 'r', encoding='utf-8') as f:
         return json.load(f)
-
-# Abstract base class for JSON visualizer
-class JSONVisualizer(ABC):
-    def __init__(self, data, icons):
-        self.data = data
-        self.icons = icons
-
-    @abstractmethod
-    def visualize(self, data=None, prefix=""):
-        pass
-# Concrete visualizer for tree style
-class TreeJSONVisualizer(JSONVisualizer):
-    def visualize(self, data=None, prefix="", is_last=True):
-        if data is None:
-            data = self.data
-        result = ""
-        items = list(data.items())
-        for i, (key, value) in enumerate(items):
-            icon = self.icons['leaf'] if not isinstance(value, dict) or not value else self.icons['intermediate']
-            connector = "└─" if i == len(items) - 1 else "├─"
-            result += f"{prefix}{connector}{icon}{key}"
-            if isinstance(value, dict):
-                result += "\n"
-                new_prefix = "   " if i == len(items) - 1 else "│  "
-                result += self.visualize(value, prefix + new_prefix, i == len(items) - 1)
-            else:
-                result += f": {value}\n"
-        return result
-
-
-# Concrete visualizer for rectangle style
-class RectangleJSONVisualizer(JSONVisualizer):
-    def get_result(self, result, key, prefix="", width=0, is_leaf=False):
-        icon = self.icons['leaf'] if is_leaf else self.icons['intermediate']
-        res = f"{prefix}├─{icon}{key} ─" + "┤\n"
-        num = width - len(res)
-        result += f"{prefix}├─{icon}{key} ─" + "─" * num + "┤\n"
-        return result
-
-    def visualize(self, data=None, prefix="", width=0, level=0):
-        if data is None:
-            data = self.data
-        result = ""
-        keys = list(data.keys())
-        for i, key in enumerate(keys):
-            is_leaf = not isinstance(data[key], dict)
-            if isinstance(data[key], dict):
-                if i == 0 and level == 0:
-                    res = f"┌─{self.icons['intermediate']}{key} ─" + "─" * 30 + "┐\n"
-                    width = len(res)
-                    result += res
-                else:
-                    result = self.get_result(result, key, prefix, width)
-                result += self.visualize(data[key], prefix + "│  ", width, level + 1)
-            else:
-                val = data[key]
-                if val is None:
-                    result = self.get_result(result, key, prefix, width, is_leaf=True)
-                else:
-                    res = f"{prefix}├─{self.icons['leaf']}{key}: {data[key]} ─┤\n"
-                    num = width - len(res)
-                    result += f"{prefix}├─{self.icons['leaf']}{key}: {data[key]} ─" + "─" * num + "┤\n"
-        # 替换最后一行
-        if level == 0:
-            # 找到换行符的位置
-            last_newline = result[:-1].rfind('\n')
-            if last_newline != -1:
-                # 截取最后两个换行符之间的内容
-                original_string = result[last_newline + 1:-1]
-                # 替换
-                original_string = original_string.replace('│  ', '└──')
-                original_string = original_string.replace('├─', '┴─')
-                original_string = original_string.replace('─┤', '─┘')
-                result = result[:last_newline + 1] + original_string
-        return result
-
-
-# Abstract factory for JSON visualizer
-class JSONVisualizerFactory(ABC):
-    @abstractmethod
-    def create_visualizer(self, data, icons):
-        pass
-
-# Concrete factory for tree style
-class TreeJSONVisualizerFactory(JSONVisualizerFactory):
-    def create_visualizer(self, data, icons):  # create 多种icons
-        return TreeJSONVisualizer(data, icons)
-
-# Concrete factory for rectangle style
-class RectangleJSONVisualizerFactory(JSONVisualizerFactory):
-    def create_visualizer(self, data, icons):
-        return RectangleJSONVisualizer(data, icons)
-
-# Director for building the visualizer
-class JSONVisualizerBuilder:
-    def __init__(self, factory):
-        self.factory = factory
-
-    def build(self, data, icons):
-        return self.factory.create_visualizer(data, icons)
 
 def main():
     parser = argparse.ArgumentParser(description="JSON file visualizer")
@@ -115,9 +142,8 @@ def main():
     parser.add_argument('-c', '--config', default='icons.json', help="Path to icon configuration file")
 
     args = parser.parse_args()
-    # Load icon families from configuration file
+
     icon_families = load_icon_families(args.config)
-    # Check if the specified icon family exists in the configuration file
     if args.icon not in icon_families:
         raise ValueError(f"Icon family '{args.icon}' not found in configuration file")
 
@@ -133,10 +159,19 @@ def main():
     else:
         raise ValueError("Unknown style")
 
-    builder = JSONVisualizerBuilder(factory)
-    visualizer = builder.build(data, icons)
-    print(visualizer.visualize())
+    visitor = factory.create_visitor(icons)
+    iterator = JSONIterator(data)
+    is_last_stack = [True]
+    for key, value, is_last, level in iterator:
+        while len(is_last_stack) <= level:
+            is_last_stack.append(True)
+
+        is_last_stack[level] = is_last
+
+        visitor.visit(key, value, is_last, level, is_last_stack[level-1])
+
+    visitor.finish()
+    print(visitor.result)
 
 if __name__ == "__main__":
     main()
-
